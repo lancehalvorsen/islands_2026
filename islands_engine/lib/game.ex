@@ -1,9 +1,14 @@
 defmodule IslandsEngine.Game do
   use GenServer
 
-  alias IslandsEngine.{Board, Coordinate, Guesses, Island, Rules}
+  alias IslandsEngine.Board
+  alias IslandsEngine.Coordinate
+  alias IslandsEngine.Guesses
+  alias IslandsEngine.Island
+  alias IslandsEngine.Rules
 
   @players [:player1, :player2]
+  @timeout 60 * 60 * 1000
 
   def start_link(name) when is_binary(name) do
     GenServer.start_link(__MODULE__, name, name: via_tuple(name))
@@ -38,9 +43,30 @@ defmodule IslandsEngine.Game do
   end
 
   def init(name) do
-    player1 = %{name: name, board: Board.new(), guesses: Guesses.new()}
-    player2 = %{name: nil, board: Board.new(), guesses: Guesses.new()}
-    {:ok, %{player1: player1, player2: player2, rules: %Rules{}}}
+    state = fresh_state(name)
+    {:ok, state, {:continue, {:init, name}}}
+  end
+
+  def terminate({:shutdown, :timeout}, state_data) do
+    :ets.delete(:game_state, state_data.player1.name)
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
+  def handle_continue({:init, name}, _state) do
+    state_data =
+      case :ets.lookup(:game_state, name) do
+        [] -> fresh_state(name)
+        [{_key, state}] -> state
+      end
+
+    :ets.insert(:game_state, {name, state_data})
+    {:noreply, state_data, @timeout}
+  end
+
+  def handle_info(:timeout, state_data) do
+    {:stop, {:shutdown, :timeout}, state_data}
   end
 
   def handle_info(:first, state) do
@@ -132,6 +158,12 @@ defmodule IslandsEngine.Game do
       {:error, :invalid_coordinate} ->
         {:reply, {:error, :invalid_coordinate}, game_state}
     end
+  end
+
+  defp fresh_state(name) do
+    player1 = %{name: name, board: Board.new(), guesses: Guesses.new()}
+    player2 = %{name: nil, board: Board.new(), guesses: Guesses.new()}
+    %{player1: player1, player2: player2, rules: %Rules{}}
   end
 
   defp player_board(game_state, player), do: Map.get(game_state, player).board
